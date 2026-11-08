@@ -1,4 +1,4 @@
-import React from "react";
+import { Book } from "../types";
 import { StyleSheet, View } from "react-native";
 import { TodoBox } from "../components/TodoBox";
 import { BookGrid } from "../components/BookGrid"; // lưới 2 cột dùng lại
@@ -10,18 +10,67 @@ import { getErrorMessage } from "../api/client";
 import { useWishlist } from "../store/hooks";
 import { RootScreenProps } from "../navigation/types";
 import { colors } from "../theme";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 
-// TODO BT8.8b: màn Danh sách yêu thích
-//   1) const { ids } = useWishlist(); state books / loading / error; useEffect gọi getBooks() (xử lý loading + lỗi + Thử lại như HomeScreen)
-//   2) favorites = books.filter((b) => ids.includes(b.id))  (useMemo)
-//   3) <BookGrid data={favorites} onPressBook=... /> — bỏ tim tại đây thì sách biến mất ngay
-//   4) ListEmptyComponent = <EmptyState emoji="💔" title="Chưa có sách yêu thích" ... actionLabel="Khám phá sách" /> → về Home
-export function WishlistScreen(_props: RootScreenProps<"Wishlist">) {
+export function WishlistScreen({ navigation }: RootScreenProps<"Wishlist">) {
+  // 1) Lấy danh sách ID đã lưu từ Redux store
+  const { ids } = useWishlist();
+
+  const [books, setBooks] = useState<Book[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Gọi API lấy toàn bộ sách
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await getBooks();
+      setBooks(data);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // 2) Lọc những cuốn sách có ID nằm trong danh sách yêu thích
+  const favorites = useMemo(
+    () => books.filter((b) => ids.includes(b.id)),
+    [books, ids]
+  );
+
+  // 3) Xử lý các trạng thái: Đang tải hoặc Báo lỗi
+  if (loading) return <LoadingView label="Đang tải sách yêu thích…" />;
+  if (error) return <ErrorView message={error} onRetry={load} />;
+
+  // 4) Hiển thị lưới sách yêu thích và trạng thái rỗng
   return (
     <View style={styles.container}>
-      <TodoBox id="BT8.8b">{"Danh sách yêu thích: lấy sách từ API, lọc theo ids trong store wishlist, hiển thị bằng BookGrid; rỗng → EmptyState “Chưa có sách yêu thích”."}</TodoBox>
+      <BookGrid
+        data={favorites}
+        onPressBook={(b) => navigation.navigate("BookDetail", { bookId: b.id })}
+        ListEmptyComponent={
+          <EmptyState
+            emoji="💔"
+            title="Chưa có sách yêu thích"
+            message="Nhấn ♡ trên mỗi cuốn sách để lưu lại ở đây."
+            actionLabel="Khám phá sách"
+            onAction={() => navigation.navigate("Tabs", { screen: "Home" })}
+          />
+        }
+      />
     </View>
   );
 }
 
-const styles = StyleSheet.create({ container: { flex: 1, backgroundColor: colors.bg, padding: 16 } });
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+});

@@ -1,33 +1,42 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { FlatList, ScrollView, StyleSheet, Text, View } from "react-native";
-import { TodoBox } from "../components/TodoBox";
-import { LoadingView } from "../components/LoadingView";
-import { ErrorView } from "../components/ErrorView";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TextInput,
+  FlatList,
+  Pressable,
+} from "react-native";
+import { RootScreenProps } from "../navigation/types";
+import { getBookById, getBooks } from "../services/bookService";
+import { getReviews, addReview } from "../services/reviewService";
+import { Book, Review } from "../types";
+import { useAuth, useCart } from "../store/hooks";
 import { RatingStars } from "../components/RatingStars";
-import { FormField } from "../components/FormField";
-import { PrimaryButton } from "../components/PrimaryButton";
 import { BookCard } from "../components/BookCard";
 import { HeartButton } from "../components/HeartButton";
-import { getBookById, getBooks } from "../services/bookService";
-import { addReview, getReviews } from "../services/reviewService";
-import { getErrorMessage } from "../api/client";
-import { useAuth, useCart } from "../store/hooks";
-import { RootScreenProps } from "../navigation/types";
-import { Book, Review } from "../types";
-import { colors, formatPrice, radius } from "../theme";
+import { PrimaryButton } from "../components/PrimaryButton";
+import { LoadingView } from "../components/LoadingView";
+import { ErrorView } from "../components/ErrorView";
+import { getErrorMessage } from "../utils/validators";
+import { colors } from "../theme";
 
-export function BookDetailScreen({ navigation, route }: RootScreenProps<"BookDetail">) {
+export function BookDetailScreen({
+  navigation,
+  route,
+}: RootScreenProps<"BookDetail">) {
   const { bookId } = route.params;
-  const { add } = useCart();
   const { user, isLoggedIn } = useAuth();
+  const { add } = useCart();
 
   const [book, setBook] = useState<Book | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
-  const [related, setRelated] = useState<Book[]>([]);
+  const [related, setRelated] = useState<Book[]>([]); // BT8.C1
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // form đánh giá
+  // State cho form đánh giá (BT8.5c)
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -37,128 +46,355 @@ export function BookDetailScreen({ navigation, route }: RootScreenProps<"BookDet
     setLoading(true);
     setError(null);
     try {
-      const [b, r] = await Promise.all([getBookById(bookId), getReviews(bookId)]);
+      const [b, revs] = await Promise.all([
+        getBookById(bookId),
+        getReviews(bookId),
+      ]);
       setBook(b);
-      setReviews(r);
-      // TODO BT8.C1 (thử thách): sách liên quan = getBooks({ categoryId: b.categoryId }) bỏ sách hiện tại → setRelated(...)
+      setReviews(revs);
+
+      // BT8.C1: Lấy danh sách sách liên quan cùng thể loại và loại trừ sách hiện tại
+      const sameCategory = await getBooks({ categoryId: b.categoryId });
+      setRelated(sameCategory.filter((x) => x.id !== b.id));
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {
       setLoading(false);
     }
   }, [bookId]);
+
   useEffect(() => {
     load();
   }, [load]);
 
-  // TODO BT8.5b: điểm trung bình = tổng rating / số review (0 nếu chưa có), dùng useMemo phụ thuộc [reviews]
-  const average = 0;
+  // BT8.5b: Tính điểm trung bình từ danh sách reviews
+  const average = useMemo(
+    () =>
+      reviews.length
+        ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
+        : 0,
+    [reviews]
+  );
 
-  // TODO BT8.5c: gửi đánh giá
-  //   1) chưa chọn sao → setFormError("Vui lòng chọn số sao"); comment rỗng → setFormError("Vui lòng nhập bình luận")
-  //   2) setSending(true) → addReview({ bookId, userId: user.id, userName: user.name, rating, comment: comment.trim() })
-  //   3) thành công: setReviews((prev) => [created, ...prev]) — cập nhật ngay, KHÔNG gọi load() lại; reset rating/comment
-  //   4) catch → setFormError(getErrorMessage(e)); finally → setSending(false)
+  // BT8.5c: Gửi đánh giá mới
   const submitReview = async () => {
     if (!user) return;
+    if (rating === 0) return setFormError("Vui lòng chọn số sao");
+    if (!comment.trim()) return setFormError("Vui lòng nhập bình luận");
+
+    setFormError(null);
+    setSending(true);
+    try {
+      const created = await addReview({
+        bookId,
+        userId: user.id,
+        userName: user.name,
+        rating,
+        comment: comment.trim(),
+      });
+      // Đưa đánh giá mới lên đầu mảng
+      setReviews((prev) => [created, ...prev]);
+      setRating(0);
+      setComment("");
+    } catch (e) {
+      setFormError(getErrorMessage(e));
+    } finally {
+      setSending(false);
+    }
   };
 
-  if (loading) return <LoadingView />;
-  if (error || !book) return <ErrorView message={error ?? "Không tìm thấy sách."} onRetry={load} />;
+  if (loading) return <LoadingView label="Đang tải chi tiết sách…" />;
+  if (error || !book)
+    return <ErrorView message={error ?? "Không tìm thấy sách"} onRetry={load} />;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <View style={[styles.cover, { backgroundColor: book.color }]}>
-        <Text style={styles.emoji}>{book.emoji}</Text>
-        <HeartButton bookId={book.id} size={40} />
+    <ScrollView style={styles.container}>
+      {/* Khung ảnh bìa sách */}
+      <View style={[styles.coverContainer, { backgroundColor: book.color }]}>
+        <Text style={styles.coverEmoji}>{book.emoji}</Text>
+        <HeartButton bookId={book.id} style={styles.heartBtn} />
       </View>
-      <Text style={styles.title}>{book.title}</Text>
-      <Text style={styles.author}>{book.author}</Text>
-      <View style={styles.ratingRow}>
-        <RatingStars value={average} size={20} />
-        <Text style={styles.ratingText}>
-          {reviews.length ? `${average.toFixed(1)} (${reviews.length} đánh giá)` : "Chưa có đánh giá"}
-        </Text>
-      </View>
-      <Text style={styles.price}>{formatPrice(book.price)}</Text>
-      <Text style={styles.stock}>Còn {book.stock} cuốn</Text>
-      <Text style={styles.desc}>{book.description}</Text>
-      <PrimaryButton
-        title="Thêm vào giỏ"
-        onPress={() => add({ bookId: book.id, title: book.title, price: book.price, emoji: book.emoji, color: book.color, stock: book.stock })}
-      />
 
-      <Text style={styles.h}>Đánh giá của độc giả</Text>
-      {isLoggedIn ? (
-        <View style={styles.form}>
-          <Text style={styles.formTitle}>Viết đánh giá của bạn</Text>
-          <RatingStars value={rating} size={30} onChange={setRating} />
-          <FormField label="Bình luận" value={comment} onChangeText={setComment} multiline placeholder="Cảm nhận của bạn về cuốn sách…" autoCapitalize="sentences" style={{ minHeight: 70, textAlignVertical: "top" }} />
-          {formError ? <Text style={styles.formError}>{formError}</Text> : null}
-          <PrimaryButton title="Gửi đánh giá" onPress={submitReview} loading={sending} />
+      <View style={styles.infoContainer}>
+        <Text style={styles.title}>{book.title}</Text>
+        <Text style={styles.author}>{book.author}</Text>
+
+        {/* Điểm đánh giá trung bình & sao (BT8.5b) */}
+        <View style={styles.ratingRow}>
+          <RatingStars value={average} size={20} />
+          <Text style={styles.ratingText}>
+            {average.toFixed(1)} ({reviews.length} đánh giá)
+          </Text>
         </View>
-      ) : (
-        <View style={styles.loginHint}>
-          <Text style={styles.loginHintText}>Đăng nhập để viết đánh giá.</Text>
-          <PrimaryButton title="Đăng nhập" variant="outline" onPress={() => navigation.navigate("Login")} />
+
+        <Text style={styles.price}>{book.price.toLocaleString("vi-VN")} đ</Text>
+        <Text style={styles.stock}>Còn {book.stock} cuốn</Text>
+
+        <Text style={styles.description}>{book.description}</Text>
+
+        <View style={styles.btnWrapper}>
+          <PrimaryButton
+            title="Thêm vào giỏ"
+            onPress={() => add(book)}
+          />
         </View>
-      )}
-      {reviews.length === 0 ? (
-        <Text style={styles.muted}>Hãy là người đầu tiên đánh giá cuốn sách này.</Text>
-      ) : (
-        reviews.map((r) => (
-          <View key={r.id} style={styles.review}>
-            <View style={styles.reviewHead}>
-              <Text style={styles.reviewer}>{r.userName}</Text>
-              <RatingStars value={r.rating} size={14} />
+      </View>
+
+      {/* Mục Đánh giá của độc giả */}
+      <View style={styles.reviewsSection}>
+        <Text style={styles.sectionHeading}>Đánh giá của độc giả</Text>
+
+        {isLoggedIn ? (
+          // Form gửi đánh giá khi đã đăng nhập (BT8.5c)
+          <View style={styles.reviewForm}>
+            <Text style={styles.formLabel}>Viết đánh giá của bạn</Text>
+            <View style={styles.starsSelect}>
+              <RatingStars value={rating} size={28} onChange={setRating} />
             </View>
-            <Text style={styles.reviewBody}>{r.comment}</Text>
+            <TextInput
+              style={styles.commentInput}
+              placeholder="Cảm nhận của bạn về cuốn sách..."
+              value={comment}
+              onChangeText={setComment}
+              multiline
+              numberOfLines={3}
+            />
+            {formError ? (
+              <Text style={styles.formErrorText}>{formError}</Text>
+            ) : null}
+            <PrimaryButton
+              title="Gửi đánh giá"
+              onPress={submitReview}
+              loading={sending}
+            />
           </View>
-        ))
-      )}
+        ) : (
+          // Nhắc nhở đăng nhập khi chưa đăng nhập
+          <View style={styles.loginPrompt}>
+            <Text style={styles.promptText}>Đăng nhập để viết đánh giá.</Text>
+            <Pressable
+              style={styles.outlineBtn}
+              onPress={() => navigation.navigate("Login")}
+            >
+              <Text style={styles.outlineBtnText}>Đăng nhập</Text>
+            </Pressable>
+          </View>
+        )}
 
-      <TodoBox id="BT8.C1">{"THỬ THÁCH: hàng ngang “Sách liên quan” cuối trang (FlatList horizontal, dùng BookCard)."}</TodoBox>
+        {/* Danh sách các bài đánh giá */}
+        <View style={styles.reviewList}>
+          {reviews.map((rev) => (
+            <View key={rev.id} style={styles.reviewItem}>
+              <View style={styles.reviewHeader}>
+                <Text style={styles.reviewerName}>{rev.userName}</Text>
+                <RatingStars value={rev.rating} size={14} />
+              </View>
+              <Text style={styles.reviewComment}>{rev.comment}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {/* BT8.C1: Hàng ngang Sách liên quan */}
       {related.length > 0 && (
-        <>
-          <Text style={styles.h}>Sách liên quan</Text>
+        <View style={styles.relatedSection}>
+          <Text style={styles.sectionHeading}>Sách liên quan</Text>
           <FlatList
             horizontal
-            showsHorizontalScrollIndicator={false}
             data={related}
             keyExtractor={(b) => String(b.id)}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.relatedList}
             renderItem={({ item }) => (
-              <View style={{ width: 150 }}>
-                <BookCard book={item} onPress={(b) => navigation.push("BookDetail", { bookId: b.id })} />
+              <View style={styles.relatedCardWrapper}>
+                <BookCard
+                  book={item}
+                  onPress={(b) =>
+                    navigation.push("BookDetail", { bookId: b.id })
+                  }
+                />
               </View>
             )}
           />
-        </>
+        </View>
       )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bg },
-  content: { padding: 16, gap: 8, paddingBottom: 40 },
-  cover: { height: 220, borderRadius: radius.lg, alignItems: "center", justifyContent: "center" },
-  emoji: { fontSize: 90 },
-  title: { fontSize: 22, fontWeight: "800", color: colors.text, marginTop: 8 },
-  author: { color: colors.muted, fontSize: 15 },
-  ratingRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  ratingText: { color: colors.muted },
-  price: { fontSize: 20, fontWeight: "800", color: colors.indigo },
-  stock: { color: colors.muted },
-  desc: { color: colors.text, lineHeight: 22, marginVertical: 4 },
-  h: { fontSize: 18, fontWeight: "800", color: colors.navy, marginTop: 18 },
-  form: { backgroundColor: "#fff", padding: 12, borderRadius: radius.md, gap: 10 },
-  formTitle: { fontWeight: "800", color: colors.text },
-  formError: { color: colors.danger },
-  loginHint: { backgroundColor: "#fff", padding: 12, borderRadius: radius.md, gap: 8 },
-  loginHintText: { color: colors.muted },
-  muted: { color: colors.muted },
-  review: { backgroundColor: "#fff", padding: 12, borderRadius: radius.md, gap: 4 },
-  reviewHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  reviewer: { fontWeight: "800", color: colors.text },
-  reviewBody: { color: colors.text },
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  coverContainer: {
+    height: 240,
+    justifyContent: "center",
+    alignItems: "center",
+    position: "relative",
+  },
+  coverEmoji: {
+    fontSize: 90,
+  },
+  heartBtn: {
+    position: "absolute",
+    top: 16,
+    right: 16,
+  },
+  infoContainer: {
+    backgroundColor: colors.card,
+    padding: 20,
+    borderBottomWidth: 1,
+    borderColor: colors.line,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: colors.text,
+    marginBottom: 6,
+  },
+  author: {
+    fontSize: 15,
+    color: colors.muted,
+    marginBottom: 10,
+  },
+  ratingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 12,
+  },
+  ratingText: {
+    fontSize: 14,
+    color: colors.muted,
+  },
+  price: {
+    fontSize: 22,
+    fontWeight: "bold",
+    color: colors.primary,
+    marginBottom: 4,
+  },
+  stock: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 16,
+  },
+  description: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: colors.text,
+    marginBottom: 20,
+  },
+  btnWrapper: {
+    marginTop: 4,
+  },
+  reviewsSection: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderColor: colors.line,
+  },
+  sectionHeading: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: colors.text,
+    marginBottom: 16,
+  },
+  reviewForm: {
+    backgroundColor: colors.bg,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  formLabel: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: colors.text,
+    marginBottom: 8,
+  },
+  starsSelect: {
+    marginBottom: 12,
+  },
+  commentInput: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 8,
+    padding: 12,
+    height: 80,
+    textAlignVertical: "top",
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  formErrorText: {
+    color: colors.danger,
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  loginPrompt: {
+    backgroundColor: colors.card,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  promptText: {
+    fontSize: 14,
+    color: colors.muted,
+    marginBottom: 12,
+  },
+  outlineBtn: {
+    borderWidth: 1,
+    borderColor: colors.primary,
+    paddingVertical: 8,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    width: "100%",
+    alignItems: "center",
+  },
+  outlineBtnText: {
+    color: colors.primary,
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  reviewList: {
+    gap: 14,
+  },
+  reviewItem: {
+    backgroundColor: colors.card,
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  reviewHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  reviewerName: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: colors.text,
+  },
+  reviewComment: {
+    fontSize: 14,
+    color: colors.text,
+    lineHeight: 20,
+  },
+  relatedSection: {
+    paddingVertical: 20,
+    marginBottom: 24,
+  },
+  relatedList: {
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  relatedCardWrapper: {
+    width: 150,
+  },
 });

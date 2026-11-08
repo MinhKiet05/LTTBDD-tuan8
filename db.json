@@ -325,6 +325,15 @@
       "rating": 4,
       "comment": "Ví dụ rõ ràng, dễ theo dõi.",
       "createdAt": "2026-10-08T13:00:00.000Z"
+    },
+    {
+      "bookId": 2,
+      "userId": 1,
+      "userName": "Học viên Demo",
+      "rating": 4,
+      "comment": "Doc tu tu cung het ma",
+      "createdAt": "2026-11-08T08:49:04.755Z",
+      "id": 9
     }
   ],
   "notifications": [

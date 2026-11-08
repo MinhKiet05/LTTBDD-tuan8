@@ -30,6 +30,7 @@ const styles = StyleSheet.create({
   card: { flex: 1, backgroundColor: colors.card, borderRadius: radius.md, padding: 10, margin: 6, elevation: 2, shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
   cover: { height: 120, borderRadius: radius.sm, overflow: "hidden", alignItems: "center", justifyContent: "center", marginBottom: 8 },
   emoji: { fontSize: 46 },
+  
   // vòng tròn trang trí mờ — làm bìa sách nhìn như ảnh bìa thật
   blobA: { position: "absolute", width: 110, height: 110, borderRadius: 55, backgroundColor: "rgba(255,255,255,0.14)", left: -28, bottom: -36 },
   blobB: { position: "absolute", width: 70, height: 70, borderRadius: 35, backgroundColor: "rgba(255,255,255,0.10)", right: -14, top: 20 },
